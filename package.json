@@ -1,0 +1,24 @@
+{
+  "name": "pi-transcribe",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Speech-to-text dictation extension for pi coding agent using sherpa-onnx",
+  "scripts": {
+    "clean": "echo 'nothing to clean'",
+    "build": "echo 'nothing to build'",
+    "check": "echo 'nothing to check'"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "dependencies": {
+    "@picovoice/pvrecorder-node": "^1.2.8",
+    "sherpa-onnx-node": "^1.12.28"
+  },
+  "devDependencies": {
+    "@mariozechner/pi-coding-agent": "*"
+  }
+}
