@@ -188,11 +188,12 @@ export default function (pi: ExtensionAPI) {
  * When spaces stop arriving (SPACE_RELEASE_MS timeout), we stop recording.
  */
 class DictationEditor extends CustomEditor {
-  private spaceCount = 0;
+  private spaceBuffer = 0;
   private lastSpaceTime = 0;
+  private rapidCount = 0;
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private releaseTimer: ReturnType<typeof setTimeout> | null = null;
   private isRecording = false;
-  private pendingSpaces = 0; // spaces typed before trigger threshold
   private callbacks: {
     onRecordingStart: () => void;
     onRecordingStop: () => void;
@@ -215,95 +216,76 @@ class DictationEditor extends CustomEditor {
       const gap = now - this.lastSpaceTime;
       this.lastSpaceTime = now;
 
-      // Reset sequence if gap too large (unless we're already recording)
-      if (gap > SPACE_GAP_MS && !this.isRecording) {
-        // This is a normal space — flush any pending state
-        this.spaceCount = 1;
-        this.pendingSpaces = 0;
-
-        // Let the space through to the editor
-        super.handleInput(data);
-        this.pendingSpaces = 1;
-
-        // Start release timer to reset if no more spaces come
-        this.clearReleaseTimer();
-        this.releaseTimer = setTimeout(() => {
-          this.spaceCount = 0;
-          this.pendingSpaces = 0;
-        }, SPACE_GAP_MS);
-
-        return;
-      }
-
-      this.spaceCount++;
-
       if (this.isRecording) {
         // Already recording — consume space, reset release timer
         this.clearReleaseTimer();
-        this.releaseTimer = setTimeout(() => {
-          this.onSpaceRelease();
-        }, SPACE_RELEASE_MS);
+        this.releaseTimer = setTimeout(() => this.onSpaceRelease(), SPACE_RELEASE_MS);
         return;
       }
 
-      if (this.spaceCount >= SPACE_TRIGGER_COUNT) {
-        // Threshold reached — enter recording mode!
-        this.isRecording = true;
+      // Count rapid spaces (gaps within threshold)
+      if (gap <= SPACE_GAP_MS && this.spaceBuffer > 0) {
+        this.rapidCount++;
+      } else {
+        this.rapidCount = 1;
+      }
 
-        // Remove the spaces we already typed into the editor
-        if (this.pendingSpaces > 0) {
-          const text = this.getText();
-          // Remove exactly the number of spaces we inserted
-          const toRemove = Math.min(this.pendingSpaces, text.length);
-          if (text.slice(-toRemove) === " ".repeat(toRemove)) {
-            this.setText(text.slice(0, -toRemove));
-          }
-          this.pendingSpaces = 0;
-        }
+      // Buffer the space (don't insert into editor yet)
+      this.spaceBuffer++;
+
+      if (this.rapidCount >= SPACE_TRIGGER_COUNT) {
+        // Trigger! Discard all buffered spaces and start recording
+        this.clearFlushTimer();
+        this.spaceBuffer = 0;
+        this.rapidCount = 0;
+        this.isRecording = true;
 
         this.callbacks.onRecordingStart();
 
-        // Set release timer
-        this.clearReleaseTimer();
-        this.releaseTimer = setTimeout(() => {
-          this.onSpaceRelease();
-        }, SPACE_RELEASE_MS);
+        this.releaseTimer = setTimeout(() => this.onSpaceRelease(), SPACE_RELEASE_MS);
         return;
       }
 
-      // Below threshold — let space through to editor, track it
-      super.handleInput(data);
-      this.pendingSpaces++;
-
-      // Reset release timer
-      this.clearReleaseTimer();
-      this.releaseTimer = setTimeout(() => {
-        this.spaceCount = 0;
-        this.pendingSpaces = 0;
+      // Not triggered yet — set timer to flush buffered spaces if no more come
+      this.clearFlushTimer();
+      this.flushTimer = setTimeout(() => {
+        this.flushSpaces();
       }, SPACE_GAP_MS);
 
       return;
     }
 
-    // Non-space input — reset space tracking
+    // Non-space input
     if (this.isRecording) {
-      // If recording and user types non-space, treat as release
       this.onSpaceRelease();
+      // Don't pass the non-space through — it was accidental during recording
+      return;
     }
-    this.spaceCount = 0;
-    this.pendingSpaces = 0;
-    this.clearReleaseTimer();
 
-    // Pass through to normal editor
+    // Flush any buffered spaces first, then handle the character
+    this.flushSpaces();
     super.handleInput(data);
+  }
+
+  /** Flush buffered spaces into the editor as normal text */
+  private flushSpaces(): void {
+    this.clearFlushTimer();
+    if (this.spaceBuffer > 0) {
+      for (let i = 0; i < this.spaceBuffer; i++) {
+        super.handleInput(" ");
+      }
+      this.spaceBuffer = 0;
+    }
+    this.rapidCount = 0;
   }
 
   private onSpaceRelease(): void {
     if (!this.isRecording) return;
     this.isRecording = false;
-    this.spaceCount = 0;
-    this.pendingSpaces = 0;
+    this.spaceBuffer = 0;
+    this.rapidCount = 0;
     this.clearReleaseTimer();
+    this.clearFlushTimer();
     this.callbacks.onRecordingStop();
   }
 
@@ -311,6 +293,13 @@ class DictationEditor extends CustomEditor {
     if (this.releaseTimer) {
       clearTimeout(this.releaseTimer);
       this.releaseTimer = null;
+    }
+  }
+
+  private clearFlushTimer(): void {
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
     }
   }
 }
