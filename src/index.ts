@@ -53,6 +53,13 @@ export default function (pi: ExtensionAPI) {
       const editor = new DictationEditor(tui, theme, keybindings, {
         onRecordingStart: () => startDictation(ctx, editor),
         onRecordingStop: () => stopDictation(ctx, editor),
+        onRecordingCancel: () => {
+          if (!dictation?.isActive) return;
+          dictation.cancel(ctx);
+          ctx.ui.setWidget("pi-transcribe", undefined);
+          ctx.ui.setStatus("pi-transcribe", undefined);
+          dictation = null;
+        },
         pvrecorderAvailable,
       });
       return editor;
@@ -174,18 +181,7 @@ export default function (pi: ExtensionAPI) {
     dictation = null;
   }
 
-  // --- Escape handling ---
 
-  pi.registerShortcut("escape", {
-    description: "Cancel active dictation",
-    handler: async (ctx) => {
-      if (!dictation?.isActive) return;
-      dictation.cancel(ctx);
-      ctx.ui.setWidget("pi-transcribe", undefined);
-      ctx.ui.setStatus("pi-transcribe", undefined);
-      dictation = null;
-    },
-  });
 }
 
 /**
@@ -205,12 +201,14 @@ class DictationEditor extends CustomEditor {
   private callbacks: {
     onRecordingStart: () => void;
     onRecordingStop: () => void;
+    onRecordingCancel?: () => void;
     pvrecorderAvailable: boolean;
   };
 
   constructor(tui: any, theme: any, keybindings: any, callbacks: {
     onRecordingStart: () => void;
     onRecordingStop: () => void;
+    onRecordingCancel?: () => void;
     pvrecorderAvailable: boolean;
   }) {
     super(tui, theme, keybindings);
@@ -218,6 +216,13 @@ class DictationEditor extends CustomEditor {
   }
 
   handleInput(data: string): void {
+    // Escape cancels active recording
+    if (data === "\x1b" && this.isRecording) {
+      this.onSpaceRelease();
+      this.callbacks.onRecordingCancel?.();
+      return;
+    }
+
     const now = Date.now();
 
     if (data === " ") {
