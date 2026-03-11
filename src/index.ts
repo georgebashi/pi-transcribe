@@ -46,9 +46,7 @@ export default function (pi: ExtensionAPI) {
       ctx.ui.notify(`pi-transcribe: ${checkError}`, "error");
       return;
     }
-    if (config.transcriber.type === "auto" && engine.resolvedBackend) {
-      ctx.ui.notify(`pi-transcribe: using ${engine.resolvedBackend}`, "info");
-    }
+
 
     // Install our custom editor that detects spacebar hold
     ctx.ui.setEditorComponent((tui: any, theme: any, keybindings: any) => {
