@@ -199,15 +199,81 @@ const BACKENDS: Record<string, Backend> = {
       return readTxtOutput(outDir, stem);
     },
   },
+
+  "apple": {
+    binary: "transcribe-apple", // compiled from Swift source
+    buildArgs(wavPath) {
+      return [wavPath];
+    },
+    async extractText(stdout) {
+      return stdout;
+    },
+  },
 };
+
+/** Path to the cached compiled Apple Speech binary. */
+const APPLE_BINARY_CACHE = path.join(
+  os.homedir(), ".cache", "pi-transcribe", "transcribe-apple"
+);
+
+/** Compile the Apple Speech Swift helper if needed. Returns the binary path or null. */
+async function ensureAppleBinary(): Promise<string | null> {
+  if (process.platform !== "darwin") return null;
+
+  // Check if already compiled
+  try {
+    await fs.access(APPLE_BINARY_CACHE, 0x1 /* fs.constants.X_OK */);
+    return APPLE_BINARY_CACHE;
+  } catch {}
+
+  // Find the Swift source relative to this file
+  const srcDir = path.dirname(new URL(import.meta.url).pathname);
+  const swiftSrc = path.join(srcDir, "transcribe-apple.swift");
+  try {
+    await fs.access(swiftSrc);
+  } catch {
+    return null; // source not found
+  }
+
+  // Check swiftc is available
+  if (!(await commandExists("swiftc"))) return null;
+
+  // Compile
+  const cacheDir = path.dirname(APPLE_BINARY_CACHE);
+  await fs.mkdir(cacheDir, { recursive: true });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const proc = spawn("swiftc", [
+        "-O", "-o", APPLE_BINARY_CACHE,
+        swiftSrc,
+        "-framework", "Speech",
+        "-framework", "Foundation",
+      ], { stdio: ["ignore", "pipe", "pipe"] });
+      let stderr = "";
+      proc.stderr!.on("data", (c: Buffer) => { stderr += c.toString(); });
+      proc.on("error", reject);
+      proc.on("exit", (code) => {
+        if (code !== 0) reject(new Error(`swiftc failed: ${stderr.slice(0, 200)}`));
+        else resolve();
+      });
+    });
+    return APPLE_BINARY_CACHE;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Auto-detect fallback order by platform.
  * Only includes backends that auto-download models (no manual setup).
+ * "apple" is last on macOS — zero-install but requires Siri/Dictation enabled.
  */
 function getAutoDetectOrder(): string[] {
   if (isAppleSilicon()) {
-    return ["parakeet-mlx", "nano-parakeet", "mlx-whisper", "whisper"];
+    return ["parakeet-mlx", "nano-parakeet", "mlx-whisper", "whisper", "apple"];
+  }
+  if (process.platform === "darwin") {
+    return ["nano-parakeet", "whisper", "apple"];
   }
   return ["nano-parakeet", "whisper"];
 }
@@ -235,6 +301,18 @@ export class TranscriptionEngine {
 
     if (t.type === "auto") {
       return this.autoDetect();
+    }
+
+    if (t.type === "apple") {
+      if (process.platform !== "darwin") {
+        return "Apple Speech is only available on macOS";
+      }
+      const binary = await ensureAppleBinary();
+      if (!binary) {
+        return "Failed to compile Apple Speech helper (swiftc not found?)";
+      }
+      this.resolved = { backend: BACKENDS["apple"], binary, backendConfig: t };
+      return null;
     }
 
     if (t.type === "custom") {
@@ -314,6 +392,16 @@ export class TranscriptionEngine {
   private async autoDetect(): Promise<string | null> {
     const order = getAutoDetectOrder();
     for (const name of order) {
+      if (name === "apple") {
+        // Apple backend: compile from Swift source, then verify it works
+        const binary = await ensureAppleBinary();
+        if (binary) {
+          this.resolved = { backend: BACKENDS["apple"], binary, backendConfig: {} };
+          return null;
+        }
+        continue;
+      }
+
       const backend = BACKENDS[name];
       if (!backend) continue;
       const binary = await this.findBinary(backend);
@@ -323,12 +411,11 @@ export class TranscriptionEngine {
       }
     }
 
-    const platform = isAppleSilicon() ? "Apple Silicon" : process.platform;
     const tried = order.join(", ");
     return (
       `No transcription backend found (tried: ${tried}).\n` +
       `Install one of:\n` +
-      order.map((n) => `  ${INSTALL_HINTS[n] || n}`).join("\n")
+      order.filter(n => INSTALL_HINTS[n]).map((n) => `  ${INSTALL_HINTS[n]}`).join("\n")
     );
   }
 
@@ -351,4 +438,5 @@ const INSTALL_HINTS: Record<string, string> = {
   "mlx-whisper":   "pipx install mlx-whisper  (or: uv tool install mlx-whisper)",
   "whisper-cpp":   "brew install whisper-cpp  (macOS) or build from source",
   "whisper":       "pipx install openai-whisper  (or: uv tool install openai-whisper)",
+  "apple":         "Enable Siri or Dictation in System Settings (macOS only, zero-install)",
 };

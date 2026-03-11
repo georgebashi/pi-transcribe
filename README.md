@@ -45,6 +45,7 @@ Listed in auto-detect priority order. The first one found on PATH is used.
 | 2 | **nano-parakeet** | ★★★★★ | ★★★★ | `pipx install nano-parakeet` |
 | 3 | **mlx-whisper** | ★★★★ | ★★★★ | `pipx install mlx-whisper` |
 | 4 | **whisper** | ★★★★ | ★★ | `pipx install openai-whisper` |
+| 5 | **apple** | ★★★ | ★★★★★ | Built-in (enable Siri/Dictation) |
 
 #### Linux / Windows auto-detect order
 
@@ -62,6 +63,12 @@ These backends require explicit configuration (not part of auto-detect):
 | **whisper-cpp** | Fastest CPU inference, needs model file | `brew install whisper-cpp` (macOS) |
 | **custom** | Any CLI that takes a WAV file | — |
 
+#### Zero-install (macOS only)
+
+| Backend | Notes |
+|---------|-------|
+| **apple** | Built-in macOS Speech framework. Zero dependencies, no downloads. Requires Siri or Dictation enabled in System Settings. Auto-detected as last fallback on macOS. |
+
 > **Note:** You can also use `uv tool install` instead of `pipx install` for any Python-based backend.
 
 ### Backend details
@@ -75,6 +82,8 @@ These backends require explicit configuration (not part of auto-detect):
 **whisper-cpp** — Whisper in C/C++. Very fast on CPU, supports Metal and CUDA. Requires downloading a GGML model file separately.
 
 **whisper** — OpenAI's original Whisper (PyTorch). Slowest but most widely compatible. Good baseline.
+
+**apple** — macOS built-in Speech framework (`SFSpeechRecognizer`). Zero install, hardware-accelerated via Neural Engine. Requires Siri or Dictation to be enabled in System Settings → Keyboard → Dictation. Compiled from Swift source on first use.
 
 ## Explicit backend configuration
 
@@ -92,6 +101,9 @@ transcriber: { type: "nano-parakeet", device: "cpu" }
 
 // whisper-cpp (requires model path)
 transcriber: { type: "whisper-cpp", modelPath: "/path/to/ggml-large-v3-turbo.bin" }
+
+// Apple Speech (macOS only, requires Siri/Dictation enabled)
+transcriber: { type: "apple" }
 
 // Custom CLI (must accept WAV path as last arg, print text to stdout)
 transcriber: { type: "custom", command: "my-transcriber", args: ["--lang", "en"] }
