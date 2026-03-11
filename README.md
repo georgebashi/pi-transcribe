@@ -62,50 +62,21 @@ The engine auto-detection runs once at startup. It walks the priority list for y
 
 ## Configuration
 
-Optional. Create `~/.pi/agent/pi-transcribe.json` to override defaults:
+Optional. Create `~/.pi/agent/pi-transcribe.json` to pin a specific engine:
 
 ```json
-{
-  "transcriber": "parakeet-mlx"
-}
+{ "transcriber": "parakeet-mlx" }
 ```
 
-That's the shorthand. For backends with options, use the object form:
+Backends with options use the object form:
 
 ```json
-{
-  "transcriber": { "type": "nano-parakeet", "device": "cpu" }
-}
+{ "transcriber": { "type": "nano-parakeet", "device": "cpu" } }
+{ "transcriber": { "type": "whisper-cpp", "modelPath": "/path/to/ggml-large-v3-turbo.bin" } }
+{ "transcriber": { "type": "custom", "command": "my-transcriber", "args": ["--lang", "en"] } }
 ```
 
-```json
-{
-  "transcriber": { "type": "whisper-cpp", "modelPath": "/path/to/ggml-large-v3-turbo.bin" }
-}
-```
-
-```json
-{
-  "transcriber": { "type": "custom", "command": "my-transcriber", "args": ["--lang", "en"] }
-}
-```
-
-If the file doesn't exist, auto-detection is used (recommended for most users).
-
-### whisper.cpp
-
-Not part of auto-detect (requires a model file). Configure explicitly:
-
-```bash
-brew install whisper-cpp  # macOS
-# Download a model: https://huggingface.co/ggerganov/whisper.cpp
-```
-
-```json
-{
-  "transcriber": { "type": "whisper-cpp", "modelPath": "/path/to/ggml-large-v3-turbo.bin" }
-}
-```
+No config file = auto-detect (recommended).
 
 ## Troubleshooting
 
