@@ -2,59 +2,99 @@
 
 Speech-to-text dictation extension for [pi](https://github.com/badlogic/pi-mono) coding agent. Hold spacebar, speak, release — your words appear at the cursor.
 
-Uses [parakeet-mlx](https://github.com/senstella/parakeet-mlx) by default (NVIDIA's Parakeet ASR on Apple Silicon via MLX) for local, offline, high-quality speech recognition — no API keys, no cloud. Supports pluggable transcription backends.
+Works on **macOS, Linux, and Windows** with automatic backend detection — installs one transcription tool and you're ready to go.
 
 ## Features
 
 - **Hold-spacebar dictation**: Hold spacebar to record, release to transcribe — text appears at cursor
 - **Live waveform**: Unicode block waveform visualization (`▁▂▃▅▇█▆▃▁`) while recording
-- **Fully local**: All processing happens on your machine
-- **High accuracy**: Parakeet TDT 0.6B v2 — best-in-class English ASR with punctuation & capitalization
-- **Pluggable backends**: Use parakeet-mlx, whisper.cpp, or any custom CLI transcriber
+- **Fully local**: All processing happens on your machine — no API keys, no cloud
+- **Cross-platform**: Supports multiple transcription backends with automatic detection
 - **Cancel support**: Press `Escape` to cancel and discard recording
 
-## Requirements
-
-- A working microphone
-- A transcription backend installed on your PATH (see below)
-
 ## Installation
-
-### 1. Install the pi extension
 
 ```bash
 pi install npm:pi-transcribe
 ```
 
-Or for development:
-```bash
-git clone <repo>
-cd pi-transcribe
-npm install
-# Add path to your pi settings
-```
+Then install a transcription backend (see below). The extension auto-detects the best available one.
 
-### 2. Install a transcription backend
+## Transcription Backends
 
-#### parakeet-mlx (default, macOS Apple Silicon only)
+The extension auto-detects the best available backend for your platform. Install at least one:
 
-```bash
-pipx install parakeet-mlx
-# or: uv tool install parakeet-mlx
-```
+### Recommended by platform
 
-On first use the model (~2.5GB) downloads automatically from HuggingFace.
+| Platform | Best option | Install |
+|----------|------------|---------|
+| **macOS Apple Silicon** | parakeet-mlx | `pipx install parakeet-mlx` |
+| **Linux (NVIDIA GPU)** | nano-parakeet | `pipx install nano-parakeet` |
+| **Linux (CPU only)** | nano-parakeet | `pipx install nano-parakeet` |
+| **Windows** | nano-parakeet | `pipx install nano-parakeet` |
 
-#### Custom transcriber
+### All supported backends
 
-Any CLI that takes a WAV file path as its last argument and prints text to stdout. Configure in `src/config.ts`:
+Listed in auto-detect priority order. The first one found on PATH is used.
+
+#### Apple Silicon auto-detect order
+
+| Priority | Backend | WER | Speed | Install |
+|----------|---------|-----|-------|---------|
+| 1 | **parakeet-mlx** | ★★★★★ | ★★★★★ | `pipx install parakeet-mlx` |
+| 2 | **nano-parakeet** | ★★★★★ | ★★★★ | `pipx install nano-parakeet` |
+| 3 | **mlx-whisper** | ★★★★ | ★★★★ | `pipx install mlx-whisper` |
+| 4 | **whisper** | ★★★★ | ★★ | `pipx install openai-whisper` |
+
+#### Linux / Windows auto-detect order
+
+| Priority | Backend | WER | Speed | Install |
+|----------|---------|-----|-------|---------|
+| 1 | **nano-parakeet** | ★★★★★ | ★★★★ | `pipx install nano-parakeet` |
+| 2 | **whisper** | ★★★★ | ★★ | `pipx install openai-whisper` |
+
+#### Manual-config only
+
+These backends require explicit configuration (not part of auto-detect):
+
+| Backend | Notes | Install |
+|---------|-------|---------|
+| **whisper-cpp** | Fastest CPU inference, needs model file | `brew install whisper-cpp` (macOS) |
+| **custom** | Any CLI that takes a WAV file | — |
+
+> **Note:** You can also use `uv tool install` instead of `pipx install` for any Python-based backend.
+
+### Backend details
+
+**parakeet-mlx** — NVIDIA Parakeet TDT 0.6B on Apple Silicon via MLX. Best-in-class English ASR with punctuation and capitalization. macOS only.
+
+**nano-parakeet** — Same Parakeet model, pure PyTorch implementation. Works everywhere PyTorch runs (CUDA, CPU, MPS). Only 5 dependencies. ~2.5x faster than NeMo.
+
+**mlx-whisper** — OpenAI Whisper large-v3-turbo on Apple Silicon via MLX. Good multilingual support. macOS only.
+
+**whisper-cpp** — Whisper in C/C++. Very fast on CPU, supports Metal and CUDA. Requires downloading a GGML model file separately.
+
+**whisper** — OpenAI's original Whisper (PyTorch). Slowest but most widely compatible. Good baseline.
+
+## Explicit backend configuration
+
+Edit `src/config.ts` to pin a specific backend instead of auto-detect:
 
 ```typescript
-transcriber: {
-  type: "custom",
-  command: "whisper-cpp",
-  args: ["--model", "base.en", "--no-timestamps"],
-}
+// Use a specific backend
+transcriber: { type: "nano-parakeet" }
+
+// With model override
+transcriber: { type: "nano-parakeet", model: "nvidia/parakeet-tdt-0.6b-v2" }
+
+// nano-parakeet with explicit device
+transcriber: { type: "nano-parakeet", device: "cpu" }
+
+// whisper-cpp (requires model path)
+transcriber: { type: "whisper-cpp", modelPath: "/path/to/ggml-large-v3-turbo.bin" }
+
+// Custom CLI (must accept WAV path as last arg, print text to stdout)
+transcriber: { type: "custom", command: "my-transcriber", args: ["--lang", "en"] }
 ```
 
 ## Usage
@@ -62,7 +102,7 @@ transcriber: {
 ### Hold-spacebar (primary)
 
 1. **Hold spacebar** — recording starts after 3 rapid spaces are detected
-2. **Speak** — a waveform visualization shows in the widget while recording
+2. **Speak** — a waveform visualization shows while recording
 3. **Release spacebar** — audio is transcribed and inserted at cursor position
 4. **Cancel** — press `Escape` while recording to discard
 
@@ -80,11 +120,11 @@ You can also use `Ctrl+Shift+R` to toggle recording on/off.
 
 ## Troubleshooting
 
-### "parakeet-mlx not found on PATH"
-Install it: `pipx install parakeet-mlx` or `uv tool install parakeet-mlx`
+### "No transcription backend found"
+Install one of the supported backends — see the table above for your platform.
 
 ### "Transcription timed out"
-The model (~2.5GB) may still be downloading on first use. Check `~/.cache/huggingface/` for progress.
+Models download automatically on first use (~1-2.5GB). Check `~/.cache/huggingface/` for progress.
 
 ### "Microphone permission denied" (macOS)
 Go to **System Settings → Privacy & Security → Microphone** and enable access for your terminal app.
@@ -95,19 +135,19 @@ Go to **System Settings → Privacy & Security → Microphone** and enable acces
 src/
 ├── index.ts          # Extension entry — custom editor with spacebar detection, waveform widget
 ├── config.ts         # Configuration (transcriber backend, sample rate)
-├── audio.ts          # Microphone capture via PvRecorder, provides Int16 samples + RMS levels
-├── recognizer.ts     # Writes temp WAV, runs CLI transcriber, reads output
-└── dictation.ts      # Buffers audio, manages waveform state, batch-transcribes on stop
+├── audio.ts          # Microphone capture via PvRecorder, Int16 samples + RMS levels
+├── recognizer.ts     # Backend registry, auto-detect, temp WAV, CLI dispatch
+└── dictation.ts      # Audio buffering, waveform state, batch-transcribe on stop
 ```
 
 **Audio flow**: PvRecorder → PCM buffer → temp WAV file → CLI transcriber → text → editor
 
-**Transcriber abstraction**: Any CLI that accepts a WAV file path and outputs text works as a backend. The `TranscriberConfig` type in `config.ts` defines the interface.
+**Backend abstraction**: Each backend defines a binary name, how to build CLI args, and how to extract text from the result. Adding a new backend is ~15 lines of code.
 
 ## Dependencies
 
-- [@picovoice/pvrecorder-node](https://www.npmjs.com/package/@picovoice/pvrecorder-node) — Cross-platform audio recorder
-- [parakeet-mlx](https://pypi.org/project/parakeet-mlx/) — Default transcription backend (user-installed)
+- [@picovoice/pvrecorder-node](https://www.npmjs.com/package/@picovoice/pvrecorder-node) — Cross-platform audio capture
+- A transcription backend (user-installed, see above)
 
 ## License
 

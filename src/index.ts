@@ -39,12 +39,15 @@ export default function (pi: ExtensionAPI) {
       return;
     }
 
-    // Check transcriber availability
+    // Check transcriber availability — auto-detect tries platform-optimal backends
     const engine = new TranscriptionEngine(config);
     const checkError = await engine.check();
     if (checkError) {
       ctx.ui.notify(`pi-transcribe: ${checkError}`, "error");
       return;
+    }
+    if (config.transcriber.type === "auto" && engine.resolvedBackend) {
+      ctx.ui.notify(`pi-transcribe: using ${engine.resolvedBackend}`, "info");
     }
 
     // Install our custom editor that detects spacebar hold
