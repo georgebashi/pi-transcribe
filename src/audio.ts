@@ -1,11 +1,18 @@
 import type { TranscribeConfig } from "./config.js";
 
-// PvRecorder types
-let PvRecorder: any;
-try {
-  PvRecorder = require("@picovoice/pvrecorder-node").PvRecorder;
-} catch {
-  // Will be caught at extension init
+// PvRecorder — loaded via dynamic import on first use
+let PvRecorder: any = null;
+let pvrecorderLoaded = false;
+
+async function loadPvRecorder(): Promise<void> {
+  if (pvrecorderLoaded) return;
+  pvrecorderLoaded = true;
+  try {
+    const mod = await import("@picovoice/pvrecorder-node");
+    PvRecorder = mod.PvRecorder;
+  } catch {
+    // Will be caught when start() is called
+  }
 }
 
 export class AudioCapture {
@@ -22,6 +29,11 @@ export class AudioCapture {
 
   get isRecording(): boolean {
     return this._isRecording;
+  }
+
+  /** Ensure PvRecorder is loaded. Call before start(). */
+  async ensureLoaded(): Promise<void> {
+    await loadPvRecorder();
   }
 
   /**

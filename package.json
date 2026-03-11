@@ -1,9 +1,14 @@
 {
   "name": "pi-transcribe",
-  "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Speech-to-text dictation extension for pi coding agent using parakeet-mlx",
+  "description": "Speech-to-text dictation extension for pi coding agent — hold spacebar, speak, release. All transcription runs locally.",
+  "license": "MIT",
+  "keywords": ["pi-package", "speech-to-text", "dictation", "transcription", "voice"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/badlogic/pi-transcribe"
+  },
   "scripts": {
     "clean": "echo 'nothing to clean'",
     "build": "echo 'nothing to build'",
@@ -16,6 +21,9 @@
   },
   "dependencies": {
     "@picovoice/pvrecorder-node": "^1.2.8"
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*"
   },
   "devDependencies": {
     "@mariozechner/pi-coding-agent": "*"

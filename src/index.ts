@@ -1,4 +1,5 @@
-import { CustomEditor, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { CustomEditor, type ExtensionAPI, type ExtensionContext, type KeybindingsManager, type Theme } from "@mariozechner/pi-coding-agent";
+import type { EditorTheme, TUI } from "@mariozechner/pi-tui";
 
 import { loadConfig } from "./config.js";
 import { AudioCapture } from "./audio.js";
@@ -17,19 +18,21 @@ export default function (pi: ExtensionAPI) {
   let audioCapture: AudioCapture | null = null;
   let dictation: DictationSession | null = null;
   let pvrecorderAvailable = true;
-  let currentCtx: any = null;
+  let currentCtx: ExtensionContext | null = null;
 
-  // Check pvrecorder availability
-  try {
-    require("@picovoice/pvrecorder-node");
-  } catch {
-    pvrecorderAvailable = false;
-  }
+  // Check pvrecorder availability (deferred to session_start via dynamic import)
 
   // --- Session lifecycle ---
 
   pi.on("session_start", async (_event, ctx) => {
     currentCtx = ctx;
+
+    // Check pvrecorder availability via dynamic import
+    try {
+      await import("@picovoice/pvrecorder-node");
+    } catch {
+      pvrecorderAvailable = false;
+    }
 
     if (!pvrecorderAvailable) {
       ctx.ui.notify(
@@ -49,7 +52,7 @@ export default function (pi: ExtensionAPI) {
 
 
     // Install our custom editor that detects spacebar hold
-    ctx.ui.setEditorComponent((tui: any, theme: any, keybindings: any) => {
+    ctx.ui.setEditorComponent((tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) => {
       const editor = new DictationEditor(tui, theme, keybindings, {
         onRecordingStart: () => startDictation(ctx, editor),
         onRecordingStop: () => stopDictation(ctx, editor),
@@ -98,15 +101,21 @@ export default function (pi: ExtensionAPI) {
 
   // --- Dictation control ---
 
-  async function startDictation(ctx: any, editor?: DictationEditor) {
+  async function startDictation(ctx: ExtensionContext, editor?: DictationEditor) {
     if (dictation?.isActive) return;
 
     try {
       const engine = new TranscriptionEngine(config);
+      const checkErr = await engine.check();
+      if (checkErr) {
+        ctx.ui.notify(`pi-transcribe: ${checkErr}`, "error");
+        return;
+      }
 
       if (!audioCapture) {
         audioCapture = new AudioCapture(config);
       }
+      await audioCapture.ensureLoaded();
 
       dictation = new DictationSession(audioCapture, engine, config);
       dictation.start(ctx);
@@ -114,7 +123,7 @@ export default function (pi: ExtensionAPI) {
       ctx.ui.setStatus("pi-transcribe", "🎤 Recording");
 
       // Widget shows live waveform
-      ctx.ui.setWidget("pi-transcribe", (tui: any, theme: any) => {
+      ctx.ui.setWidget("pi-transcribe", (tui: TUI, theme: Theme) => {
         if (dictation) {
           dictation.setTui(tui);
         }
@@ -134,14 +143,14 @@ export default function (pi: ExtensionAPI) {
 
             const waveStr = bars.map(bar =>
               bar === " "
-                ? (theme?.fg?.("dim", bar) ?? bar)
-                : (theme?.fg?.("accent", bar) ?? bar)
+                ? theme.fg("dim", bar)
+                : theme.fg("accent", bar)
             ).join("");
 
-            const line = (theme?.fg?.("accent", label) ?? label)
+            const line = theme.fg("accent", label)
               + waveStr
-              + (theme?.fg?.("muted", time) ?? time)
-              + (theme?.fg?.("dim", hint) ?? hint);
+              + theme.fg("muted", time)
+              + theme.fg("dim", hint);
 
             return [line];
           },
@@ -156,12 +165,12 @@ export default function (pi: ExtensionAPI) {
     }
   }
 
-  async function stopDictation(ctx: any, editor?: DictationEditor) {
+  async function stopDictation(ctx: ExtensionContext, editor?: DictationEditor) {
     if (!dictation?.isActive) return;
 
     ctx.ui.setStatus("pi-transcribe", "✨ Transcribing...");
-    ctx.ui.setWidget("pi-transcribe", (tui: any, theme: any) => ({
-      render: () => [theme?.fg?.("accent", "✨ Transcribing audio...") ?? "✨ Transcribing audio..."],
+    ctx.ui.setWidget("pi-transcribe", (_tui: TUI, theme: Theme) => ({
+      render: () => [theme.fg("accent", "✨ Transcribing audio...")],
       invalidate: () => {},
     }), { placement: "belowEditor" });
 
@@ -205,7 +214,7 @@ class DictationEditor extends CustomEditor {
     pvrecorderAvailable: boolean;
   };
 
-  constructor(tui: any, theme: any, keybindings: any, callbacks: {
+  constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager, callbacks: {
     onRecordingStart: () => void;
     onRecordingStop: () => void;
     onRecordingCancel?: () => void;

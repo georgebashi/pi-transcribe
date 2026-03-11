@@ -1,3 +1,5 @@
+import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type { TUI } from "@mariozechner/pi-tui";
 import type { TranscribeConfig } from "./config.js";
 import type { AudioCapture } from "./audio.js";
 import type { TranscriptionEngine } from "./recognizer.js";
@@ -32,7 +34,7 @@ export class DictationSession {
   private startTime = 0;
 
   /** UI refs */
-  private tui: any = null;
+  private tui: TUI | null = null;
 
   constructor(
     audioCapture: AudioCapture,
@@ -49,7 +51,7 @@ export class DictationSession {
   }
 
   /** Set the TUI reference for triggering re-renders */
-  setTui(tui: any): void {
+  setTui(tui: TUI): void {
     this.tui = tui;
   }
 
@@ -86,7 +88,7 @@ export class DictationSession {
   }
 
   /** Start a dictation session */
-  start(ctx: any): void {
+  start(ctx: ExtensionContext): void {
     if (this._isActive) return;
 
     this._isActive = true;
@@ -131,7 +133,7 @@ export class DictationSession {
    * Stop dictation — finalize and batch-transcribe.
    * Returns the transcribed text (caller handles insertion).
    */
-  async stop(ctx: any): Promise<string> {
+  async stop(ctx: ExtensionContext): Promise<string> {
     if (!this._isActive) return "";
 
     this.audioCapture.stop();
@@ -153,7 +155,7 @@ export class DictationSession {
   }
 
   /** Cancel dictation — discard audio */
-  cancel(ctx: any): void {
+  cancel(_ctx: ExtensionContext): void {
     if (!this._isActive) return;
     this.audioCapture.stop();
     this._isActive = false;
