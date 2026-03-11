@@ -65,8 +65,10 @@ export class DictationSession {
     }
 
     for (const rms of slice) {
-      // Map RMS to block index. Speech RMS is typically 0.01-0.15.
-      const normalized = Math.min(1, rms * 8);
+      // Map RMS to block index using sqrt scale for better dynamic range.
+      // Speech RMS is typically 0.01-0.15; sqrt compresses the range so
+      // normal speech fills the full bar height instead of staying in the bottom half.
+      const normalized = Math.min(1, Math.sqrt(rms) * 3);
       const idx = Math.round(normalized * (WAVEFORM_BLOCKS.length - 1));
       bars.push(WAVEFORM_BLOCKS[idx]);
     }

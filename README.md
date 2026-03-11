@@ -2,42 +2,60 @@
 
 Speech-to-text dictation extension for [pi](https://github.com/badlogic/pi-mono) coding agent. Hold spacebar, speak, release — your words appear at the cursor.
 
-Uses [parakeet-mlx](https://github.com/senstella/parakeet-mlx) (NVIDIA's Parakeet ASR model on Apple Silicon via MLX) for local, offline, high-quality speech recognition — no API keys, no cloud.
+Uses [parakeet-mlx](https://github.com/senstella/parakeet-mlx) by default (NVIDIA's Parakeet ASR on Apple Silicon via MLX) for local, offline, high-quality speech recognition — no API keys, no cloud. Supports pluggable transcription backends.
 
 ## Features
 
 - **Hold-spacebar dictation**: Hold spacebar to record, release to transcribe — text appears at cursor
 - **Live waveform**: Unicode block waveform visualization (`▁▂▃▅▇█▆▃▁`) while recording
-- **Fully local**: All processing happens on your machine using parakeet-mlx
+- **Fully local**: All processing happens on your machine
 - **High accuracy**: Parakeet TDT 0.6B v2 — best-in-class English ASR with punctuation & capitalization
-- **Batch transcription**: Records complete audio, transcribes at full quality on release
+- **Pluggable backends**: Use parakeet-mlx, whisper.cpp, or any custom CLI transcriber
 - **Cancel support**: Press `Escape` to cancel and discard recording
 
 ## Requirements
 
-- **macOS with Apple Silicon** (M1/M2/M3/M4) — required for MLX
-- **Python 3.10+** with a virtual environment containing `parakeet-mlx`
 - A working microphone
+- A transcription backend installed on your PATH (see below)
 
 ## Installation
 
-1. Clone or download this repository
-2. Install Node.js dependencies:
-   ```bash
-   cd pi-transcribe
-   npm install
-   ```
-3. Set up the Python environment:
-   ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate
-   pip install parakeet-mlx
-   ```
-4. Add to your Pi configuration. Either:
-   - Copy/symlink to `~/.pi/agent/extensions/pi-transcribe/`
-   - Or add the path to your `settings.json` extensions array
+### 1. Install the pi extension
 
-5. On first use, the model (~2.5GB) will be downloaded automatically from HuggingFace to `~/.cache/huggingface/`.
+```bash
+pi install npm:pi-transcribe
+```
+
+Or for development:
+```bash
+git clone <repo>
+cd pi-transcribe
+npm install
+# Add path to your pi settings
+```
+
+### 2. Install a transcription backend
+
+#### parakeet-mlx (default, macOS Apple Silicon only)
+
+```bash
+pipx install parakeet-mlx
+# or: uv tool install parakeet-mlx
+```
+
+On first use the model (~2.5GB) downloads automatically from HuggingFace.
+
+#### Custom transcriber
+
+Any CLI that takes a WAV file path as its last argument and prints text to stdout. Configure in `src/config.ts`:
+
+```typescript
+transcriber: {
+  type: "custom",
+  command: "whisper-cpp",
+  args: ["--model", "base.en", "--no-timestamps"],
+}
+```
 
 ## Usage
 
@@ -48,11 +66,9 @@ Uses [parakeet-mlx](https://github.com/senstella/parakeet-mlx) (NVIDIA's Parakee
 3. **Release spacebar** — audio is transcribed and inserted at cursor position
 4. **Cancel** — press `Escape` while recording to discard
 
-The extension detects spacebar auto-repeat (rapid stream of space characters) to distinguish holding from normal typing. The spaces typed before recording are automatically removed.
-
 ### Ctrl+Shift+R (toggle)
 
-You can also use `Ctrl+Shift+R` to toggle recording on/off, like a traditional push-to-talk.
+You can also use `Ctrl+Shift+R` to toggle recording on/off.
 
 ## Keyboard Shortcuts
 
@@ -62,54 +78,36 @@ You can also use `Ctrl+Shift+R` to toggle recording on/off, like a traditional p
 | `Ctrl+Shift+R` | Toggle dictation on/off |
 | `Escape` | Cancel recording (discard audio) |
 
-## Commands
-
-| Command | Description |
-|---------|-------------|
-| `/transcribe-cancel` | Cancel active dictation |
-
-## Configuration
-
-The extension uses sensible defaults. Edit `src/config.ts` to change:
-
-- **Model**: `mlx-community/parakeet-tdt-0.6b-v2` — HuggingFace model ID
-- **Sample rate**: 16kHz
-
 ## Troubleshooting
 
-### "Transcription worker timed out"
-The model (~2.5GB) may still be downloading. Check `~/.cache/huggingface/` for progress.
+### "parakeet-mlx not found on PATH"
+Install it: `pipx install parakeet-mlx` or `uv tool install parakeet-mlx`
+
+### "Transcription timed out"
+The model (~2.5GB) may still be downloading on first use. Check `~/.cache/huggingface/` for progress.
 
 ### "Microphone permission denied" (macOS)
 Go to **System Settings → Privacy & Security → Microphone** and enable access for your terminal app.
-
-### "Failed to start transcription worker"
-Ensure the Python venv exists at `.venv/` in the project directory and has `parakeet-mlx` installed:
-```bash
-source .venv/bin/activate
-pip install parakeet-mlx
-```
 
 ## Architecture
 
 ```
 src/
-├── index.ts               # Extension entry — custom editor with spacebar detection, waveform widget
-├── config.ts              # Configuration defaults (model ID, sample rate)
-├── audio.ts               # Microphone capture via PvRecorder, provides Int16 samples + RMS levels
-├── recognizer.ts          # Spawns one-shot Python worker, pipes audio buffer, returns text
-├── dictation.ts           # Buffers audio, manages waveform state, batch-transcribes on stop
-└── transcribe_worker.py   # Python worker: reads s16le PCM from stdin, transcribes via parakeet-mlx
+├── index.ts          # Extension entry — custom editor with spacebar detection, waveform widget
+├── config.ts         # Configuration (transcriber backend, sample rate)
+├── audio.ts          # Microphone capture via PvRecorder, provides Int16 samples + RMS levels
+├── recognizer.ts     # Writes temp WAV, runs CLI transcriber, reads output
+└── dictation.ts      # Buffers audio, manages waveform state, batch-transcribes on stop
 ```
 
-**Node.js side**: Captures microphone audio via PvRecorder, accumulates raw PCM in memory, renders waveform from RMS levels. On stop, pipes complete audio to Python worker.
+**Audio flow**: PvRecorder → PCM buffer → temp WAV file → CLI transcriber → text → editor
 
-**Python side**: Reads all audio from stdin, computes log-mel spectrogram, runs parakeet-mlx inference, outputs JSON result.
+**Transcriber abstraction**: Any CLI that accepts a WAV file path and outputs text works as a backend. The `TranscriberConfig` type in `config.ts` defines the interface.
 
 ## Dependencies
 
 - [@picovoice/pvrecorder-node](https://www.npmjs.com/package/@picovoice/pvrecorder-node) — Cross-platform audio recorder
-- [parakeet-mlx](https://pypi.org/project/parakeet-mlx/) — NVIDIA Parakeet ASR on Apple Silicon via MLX (Python)
+- [parakeet-mlx](https://pypi.org/project/parakeet-mlx/) — Default transcription backend (user-installed)
 
 ## License
 

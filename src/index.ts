@@ -39,6 +39,14 @@ export default function (pi: ExtensionAPI) {
       return;
     }
 
+    // Check transcriber availability
+    const engine = new TranscriptionEngine(config);
+    const checkError = await engine.check();
+    if (checkError) {
+      ctx.ui.notify(`pi-transcribe: ${checkError}`, "error");
+      return;
+    }
+
     // Install our custom editor that detects spacebar hold
     ctx.ui.setEditorComponent((tui: any, theme: any, keybindings: any) => {
       const editor = new DictationEditor(tui, theme, keybindings, {
