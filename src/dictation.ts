@@ -19,7 +19,6 @@ export class DictationSession {
   private engine: TranscriptionEngine;
   private config: TranscribeConfig;
 
-  private existingText = "";
   private _isActive = false;
 
   /** Raw audio buffer — accumulates all recorded PCM data */
@@ -33,7 +32,6 @@ export class DictationSession {
   private startTime = 0;
 
   /** UI refs */
-  private uiCtx: any = null;
   private tui: any = null;
 
   constructor(
@@ -58,19 +56,16 @@ export class DictationSession {
   /** Get waveform bars for rendering. Returns array of block characters. */
   getWaveformBars(maxBars: number): string[] {
     const history = this.rmsHistory;
-    // Take the last `maxBars` entries
     const start = Math.max(0, history.length - maxBars);
     const slice = history.slice(start);
 
-    // Pad with spaces if we don't have enough history yet
     const bars: string[] = [];
     for (let i = 0; i < maxBars - slice.length; i++) {
       bars.push(WAVEFORM_BLOCKS[0]);
     }
 
     for (const rms of slice) {
-      // Map RMS to block index. RMS of speech is typically 0.01-0.15
-      // Apply a curve to make speech more visible
+      // Map RMS to block index. Speech RMS is typically 0.01-0.15.
       const normalized = Math.min(1, rms * 8);
       const idx = Math.round(normalized * (WAVEFORM_BLOCKS.length - 1));
       bars.push(WAVEFORM_BLOCKS[idx]);
@@ -92,9 +87,7 @@ export class DictationSession {
   start(ctx: any): void {
     if (this._isActive) return;
 
-    this.existingText = ctx.ui.getEditorText() || "";
     this._isActive = true;
-    this.uiCtx = ctx;
     this.audioChunks = [];
     this.totalSamples = 0;
     this.rmsHistory = [];
@@ -110,7 +103,6 @@ export class DictationSession {
       } else {
         this.rmsHistory.push(0);
       }
-      // Trim history
       if (this.rmsHistory.length > WAVEFORM_HISTORY * 2) {
         this.rmsHistory = this.rmsHistory.slice(-WAVEFORM_HISTORY);
       }
@@ -133,50 +125,36 @@ export class DictationSession {
     );
   }
 
-  /** Stop dictation — finalize and batch-transcribe, then commit text to editor */
-  async stop(ctx: any): Promise<void> {
-    if (!this._isActive) return;
+  /**
+   * Stop dictation — finalize and batch-transcribe.
+   * Returns the transcribed text (caller handles insertion).
+   */
+  async stop(ctx: any): Promise<string> {
+    if (!this._isActive) return "";
 
     this.audioCapture.stop();
     this._isActive = false;
     this.stopWaveformTimer();
 
-    // Build the complete audio buffer from chunks
     const audioBuffer = this.buildAudioBuffer();
     const duration = this.totalSamples / this.config.sampleRate;
 
     if (duration < 0.3) {
       ctx.ui.notify("Recording too short", "info");
       this.cleanup();
-      return;
+      return "";
     }
 
-    // Transcribe the complete audio
     const text = await this.engine.transcribe(audioBuffer);
-
-    if (text.length > 0) {
-      let editorText = this.existingText;
-      if (editorText.length > 0 && !editorText.endsWith(" ") && !editorText.endsWith("\n")) {
-        editorText += " ";
-      }
-      editorText += text;
-      ctx.ui.setEditorText(editorText);
-      this.requestRender();
-    }
-
     this.cleanup();
+    return text;
   }
 
-  /** Cancel dictation and restore editor to original state */
+  /** Cancel dictation — discard audio */
   cancel(ctx: any): void {
     if (!this._isActive) return;
-
     this.audioCapture.stop();
     this._isActive = false;
-    this.stopWaveformTimer();
-
-    ctx.ui.setEditorText(this.existingText);
-    this.requestRender();
     this.cleanup();
   }
 
@@ -204,10 +182,8 @@ export class DictationSession {
     this.totalSamples = 0;
     this.rmsHistory = [];
     this.rmsAccum = [];
-    this.uiCtx = null;
   }
 
-  /** Request TUI re-render */
   private requestRender(): void {
     if (this.tui?.requestRender) {
       this.tui.requestRender();

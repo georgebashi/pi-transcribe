@@ -1,17 +1,17 @@
 # pi-transcribe
 
-Speech-to-text dictation extension for [pi](https://github.com/badlogic/pi-mono) coding agent. Press a key, speak, and your words appear live in the prompt editor.
+Speech-to-text dictation extension for [pi](https://github.com/badlogic/pi-mono) coding agent. Hold spacebar, speak, release — your words appear at the cursor.
 
 Uses [parakeet-mlx](https://github.com/senstella/parakeet-mlx) (NVIDIA's Parakeet ASR model on Apple Silicon via MLX) for local, offline, high-quality speech recognition — no API keys, no cloud.
 
 ## Features
 
-- **Toggle dictation**: Press `Ctrl+Shift+R` to start/stop recording
-- **Live transcription**: Text streams into the editor as you speak, in chunks
+- **Hold-spacebar dictation**: Hold spacebar to record, release to transcribe — text appears at cursor
+- **Live waveform**: Unicode block waveform visualization (`▁▂▃▅▇█▆▃▁`) while recording
 - **Fully local**: All processing happens on your machine using parakeet-mlx
 - **High accuracy**: Parakeet TDT 0.6B v2 — best-in-class English ASR with punctuation & capitalization
-- **Visual feedback**: Recording widget + footer status indicator
-- **Cancel support**: Press `Escape` to cancel and discard transcription
+- **Batch transcription**: Records complete audio, transcribes at full quality on release
+- **Cancel support**: Press `Escape` to cancel and discard recording
 
 ## Requirements
 
@@ -41,33 +41,32 @@ Uses [parakeet-mlx](https://github.com/senstella/parakeet-mlx) (NVIDIA's Parakee
 
 ## Usage
 
-1. **Start dictation**: Press `Ctrl+Shift+R`
-   - First use loads the model (takes a few seconds)
-   - The widget shows `🎙️ Recording...` when active
+### Hold-spacebar (primary)
 
-2. **Speak**: Your words stream into the prompt editor
-   - Transcription arrives in chunks as parakeet-mlx processes audio
-   - Text updates in real-time as more audio is processed
+1. **Hold spacebar** — recording starts after 3 rapid spaces are detected
+2. **Speak** — a waveform visualization shows in the widget while recording
+3. **Release spacebar** — audio is transcribed and inserted at cursor position
+4. **Cancel** — press `Escape` while recording to discard
 
-3. **Stop dictation**: Press `Ctrl+Shift+R` again
-   - Any remaining speech is finalized
+The extension detects spacebar auto-repeat (rapid stream of space characters) to distinguish holding from normal typing. The spaces typed before recording are automatically removed.
 
-4. **Cancel**: Press `Escape` while recording
-   - All transcribed text is discarded
-   - Editor restored to pre-recording state
+### Ctrl+Shift+R (toggle)
+
+You can also use `Ctrl+Shift+R` to toggle recording on/off, like a traditional push-to-talk.
+
+## Keyboard Shortcuts
+
+| Shortcut | Description |
+|----------|-------------|
+| **Hold Spacebar** | Record while held, transcribe on release |
+| `Ctrl+Shift+R` | Toggle dictation on/off |
+| `Escape` | Cancel recording (discard audio) |
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
 | `/transcribe-cancel` | Cancel active dictation |
-
-## Keyboard Shortcuts
-
-| Shortcut | Description |
-|----------|-------------|
-| `Ctrl+Shift+R` | Toggle dictation on/off |
-| `Escape` | Cancel dictation (discard text) |
 
 ## Configuration
 
@@ -78,11 +77,11 @@ The extension uses sensible defaults. Edit `src/config.ts` to change:
 
 ## Troubleshooting
 
-### "Transcription worker timed out loading model"
-The model (~2.5GB) may still be downloading. Check `~/.cache/huggingface/` for progress. First run takes longer.
+### "Transcription worker timed out"
+The model (~2.5GB) may still be downloading. Check `~/.cache/huggingface/` for progress.
 
 ### "Microphone permission denied" (macOS)
-Go to **System Settings → Privacy & Security → Microphone** and enable access for your terminal app (e.g., Terminal.app, iTerm2, Warp).
+Go to **System Settings → Privacy & Security → Microphone** and enable access for your terminal app.
 
 ### "Failed to start transcription worker"
 Ensure the Python venv exists at `.venv/` in the project directory and has `parakeet-mlx` installed:
@@ -91,29 +90,25 @@ source .venv/bin/activate
 pip install parakeet-mlx
 ```
 
-### No audio input detected
-Ensure a microphone is connected and selected as the default input device in your OS audio settings.
-
 ## Architecture
 
 ```
 src/
-├── index.ts               # Extension entry point — registers shortcuts, commands, events
+├── index.ts               # Extension entry — custom editor with spacebar detection, waveform widget
 ├── config.ts              # Configuration defaults (model ID, sample rate)
-├── audio.ts               # Microphone capture via PvRecorder (Node.js)
-├── recognizer.ts          # Spawns Python worker, feeds audio via stdin, reads JSON results
-├── dictation.ts           # Orchestrator: audio → engine → editor updates
-└── transcribe_worker.py   # Python worker: parakeet-mlx streaming transcription
+├── audio.ts               # Microphone capture via PvRecorder, provides Int16 samples + RMS levels
+├── recognizer.ts          # Spawns one-shot Python worker, pipes audio buffer, returns text
+├── dictation.ts           # Buffers audio, manages waveform state, batch-transcribes on stop
+└── transcribe_worker.py   # Python worker: reads s16le PCM from stdin, transcribes via parakeet-mlx
 ```
 
-The architecture bridges Node.js and Python:
-- **Node.js side**: Captures microphone audio via `@picovoice/pvrecorder-node`, streams raw PCM to the Python worker via stdin
-- **Python side**: Runs `parakeet-mlx` streaming transcription, emits JSON-line results to stdout
-- **Protocol**: stdin receives raw s16le PCM at 16kHz; stdout emits `{"type":"partial","text":"..."}` and `{"type":"final","text":"..."}` JSON lines
+**Node.js side**: Captures microphone audio via PvRecorder, accumulates raw PCM in memory, renders waveform from RMS levels. On stop, pipes complete audio to Python worker.
+
+**Python side**: Reads all audio from stdin, computes log-mel spectrogram, runs parakeet-mlx inference, outputs JSON result.
 
 ## Dependencies
 
-- [@picovoice/pvrecorder-node](https://www.npmjs.com/package/@picovoice/pvrecorder-node) — Cross-platform audio recorder (prebuilt native addon)
+- [@picovoice/pvrecorder-node](https://www.npmjs.com/package/@picovoice/pvrecorder-node) — Cross-platform audio recorder
 - [parakeet-mlx](https://pypi.org/project/parakeet-mlx/) — NVIDIA Parakeet ASR on Apple Silicon via MLX (Python)
 
 ## License
