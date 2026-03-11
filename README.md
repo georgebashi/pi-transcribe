@@ -1,165 +1,110 @@
 # pi-transcribe
 
-Speech-to-text dictation extension for [pi](https://github.com/badlogic/pi-mono) coding agent. Hold spacebar, speak, release — your words appear at the cursor.
+Voice dictation for [pi](https://github.com/badlogic/pi-mono). Hold spacebar, speak, release — your words appear at the cursor.
 
-Works on **macOS, Linux, and Windows** with automatic backend detection — installs one transcription tool and you're ready to go.
+All transcription runs locally on your machine. No API keys, no cloud.
 
-## Features
-
-- **Hold-spacebar dictation**: Hold spacebar to record, release to transcribe — text appears at cursor
-- **Live waveform**: Unicode block waveform visualization (`▁▂▃▅▇█▆▃▁`) while recording
-- **Fully local**: All processing happens on your machine — no API keys, no cloud
-- **Cross-platform**: Supports multiple transcription backends with automatic detection
-- **Cancel support**: Press `Escape` to cancel and discard recording
-
-## Installation
+## Install
 
 ```bash
 pi install npm:pi-transcribe
 ```
 
-Then install a transcription backend (see below). The extension auto-detects the best available one.
+Then install a speech-to-text engine (see next section).
 
-## Transcription Backends
+## Speech-to-text engine
 
-The extension auto-detects the best available backend for your platform. Install at least one:
+pi-transcribe needs a transcription tool on your PATH. It auto-detects the best one available — just install one and go.
 
-### Recommended by platform
+### macOS (Apple Silicon)
 
-| Platform | Best option | Install |
-|----------|------------|---------|
-| **macOS Apple Silicon** | parakeet-mlx | `pipx install parakeet-mlx` |
-| **Linux (NVIDIA GPU)** | nano-parakeet | `pipx install nano-parakeet` |
-| **Linux (CPU only)** | nano-parakeet | `pipx install nano-parakeet` |
-| **Windows** | nano-parakeet | `pipx install nano-parakeet` |
+Pick one. Listed best → worst. The first one found is used automatically.
 
-### All supported backends
+| Engine | Install | Notes |
+|--------|---------|-------|
+| **parakeet-mlx** | `pipx install parakeet-mlx` | Best quality + fastest. Recommended. |
+| **nano-parakeet** | `pipx install nano-parakeet` | Same model, PyTorch. Slightly slower on Mac. |
+| **mlx-whisper** | `pipx install mlx-whisper` | Whisper large-v3-turbo on MLX. |
+| **whisper** | `pipx install openai-whisper` | Original OpenAI Whisper. Slowest. |
+| **apple** | *(built-in)* | macOS Speech framework. Zero install, but requires Siri or Dictation enabled in System Settings. |
 
-Listed in auto-detect priority order. The first one found on PATH is used.
+### Linux & Windows
 
-#### Apple Silicon auto-detect order
+| Engine | Install | Notes |
+|--------|---------|-------|
+| **nano-parakeet** | `pipx install nano-parakeet` | Best quality. Uses CUDA if available, falls back to CPU. |
+| **whisper** | `pipx install openai-whisper` | Widely compatible fallback. |
 
-| Priority | Backend | WER | Speed | Install |
-|----------|---------|-----|-------|---------|
-| 1 | **parakeet-mlx** | ★★★★★ | ★★★★★ | `pipx install parakeet-mlx` |
-| 2 | **nano-parakeet** | ★★★★★ | ★★★★ | `pipx install nano-parakeet` |
-| 3 | **mlx-whisper** | ★★★★ | ★★★★ | `pipx install mlx-whisper` |
-| 4 | **whisper** | ★★★★ | ★★ | `pipx install openai-whisper` |
-| 5 | **apple** | ★★★ | ★★★★★ | Built-in (enable Siri/Dictation) |
+> **Tip:** You can use `uv tool install` instead of `pipx install` if you prefer [uv](https://github.com/astral-sh/uv).
 
-#### Linux / Windows auto-detect order
-
-| Priority | Backend | WER | Speed | Install |
-|----------|---------|-----|-------|---------|
-| 1 | **nano-parakeet** | ★★★★★ | ★★★★ | `pipx install nano-parakeet` |
-| 2 | **whisper** | ★★★★ | ★★ | `pipx install openai-whisper` |
-
-#### Manual-config only
-
-These backends require explicit configuration (not part of auto-detect):
-
-| Backend | Notes | Install |
-|---------|-------|---------|
-| **whisper-cpp** | Fastest CPU inference, needs model file | `brew install whisper-cpp` (macOS) |
-| **custom** | Any CLI that takes a WAV file | — |
-
-#### Zero-install (macOS only)
-
-| Backend | Notes |
-|---------|-------|
-| **apple** | Built-in macOS Speech framework. Zero dependencies, no downloads. Requires Siri or Dictation enabled in System Settings. Auto-detected as last fallback on macOS. |
-
-> **Note:** You can also use `uv tool install` instead of `pipx install` for any Python-based backend.
-
-### Backend details
-
-**parakeet-mlx** — NVIDIA Parakeet TDT 0.6B on Apple Silicon via MLX. Best-in-class English ASR with punctuation and capitalization. macOS only.
-
-**nano-parakeet** — Same Parakeet model, pure PyTorch implementation. Works everywhere PyTorch runs (CUDA, CPU, MPS). Only 5 dependencies. ~2.5x faster than NeMo.
-
-**mlx-whisper** — OpenAI Whisper large-v3-turbo on Apple Silicon via MLX. Good multilingual support. macOS only.
-
-**whisper-cpp** — Whisper in C/C++. Very fast on CPU, supports Metal and CUDA. Requires downloading a GGML model file separately.
-
-**whisper** — OpenAI's original Whisper (PyTorch). Slowest but most widely compatible. Good baseline.
-
-**apple** — macOS built-in Speech framework (`SFSpeechRecognizer`). Zero install, hardware-accelerated via Neural Engine. Requires Siri or Dictation to be enabled in System Settings → Keyboard → Dictation. Compiled from Swift source on first use.
-
-## Explicit backend configuration
-
-Edit `src/config.ts` to pin a specific backend instead of auto-detect:
-
-```typescript
-// Use a specific backend
-transcriber: { type: "nano-parakeet" }
-
-// With model override
-transcriber: { type: "nano-parakeet", model: "nvidia/parakeet-tdt-0.6b-v2" }
-
-// nano-parakeet with explicit device
-transcriber: { type: "nano-parakeet", device: "cpu" }
-
-// whisper-cpp (requires model path)
-transcriber: { type: "whisper-cpp", modelPath: "/path/to/ggml-large-v3-turbo.bin" }
-
-// Apple Speech (macOS only, requires Siri/Dictation enabled)
-transcriber: { type: "apple" }
-
-// Custom CLI (must accept WAV path as last arg, print text to stdout)
-transcriber: { type: "custom", command: "my-transcriber", args: ["--lang", "en"] }
-```
+Models download automatically on first use (~1–2.5 GB to `~/.cache/huggingface/`).
 
 ## Usage
 
-### Hold-spacebar (primary)
+### Hold spacebar
 
-1. **Hold spacebar** — recording starts after 3 rapid spaces are detected
-2. **Speak** — a waveform visualization shows while recording
-3. **Release spacebar** — audio is transcribed and inserted at cursor position
-4. **Cancel** — press `Escape` while recording to discard
+Hold spacebar → speak → release. Text is transcribed and inserted at the cursor.
 
-### Ctrl+Shift+R (toggle)
+A live waveform (`▁▂▃▅▇█▆▃▁`) shows while recording. Press **Escape** to cancel.
 
-You can also use `Ctrl+Shift+R` to toggle recording on/off.
+### Ctrl+Shift+R
 
-## Keyboard Shortcuts
+Toggle recording on/off (alternative to hold-spacebar).
 
-| Shortcut | Description |
-|----------|-------------|
-| **Hold Spacebar** | Record while held, transcribe on release |
-| `Ctrl+Shift+R` | Toggle dictation on/off |
-| `Escape` | Cancel recording (discard audio) |
+## How it works
+
+1. **Audio capture** — PvRecorder captures 16kHz mono PCM from your microphone
+2. **Recording** — Audio accumulates in memory while you hold spacebar; a waveform renders from RMS levels
+3. **Transcription** — On release, audio is written to a temp WAV file and passed to whichever speech-to-text engine is available
+4. **Insertion** — Transcribed text is inserted at the cursor position
+
+The engine auto-detection runs once at startup. It walks the priority list for your platform and locks the first binary it finds on PATH.
+
+## Advanced
+
+### Pin a specific engine
+
+Edit `src/config.ts`:
+
+```typescript
+transcriber: { type: "parakeet-mlx" }
+// or with options:
+transcriber: { type: "nano-parakeet", device: "cpu" }
+transcriber: { type: "whisper-cpp", modelPath: "/path/to/ggml-large-v3-turbo.bin" }
+transcriber: { type: "custom", command: "my-tool", args: ["--lang", "en"] }
+```
+
+### Custom transcriber
+
+Any CLI that takes a WAV file path as its last argument and prints text to stdout:
+
+```typescript
+transcriber: { type: "custom", command: "my-transcriber", args: ["--format", "plain"] }
+// runs: my-transcriber --format plain /tmp/audio.wav
+```
+
+### whisper.cpp
+
+Not part of auto-detect (requires a model file). Configure explicitly:
+
+```bash
+brew install whisper-cpp  # macOS
+# Download a model: https://huggingface.co/ggerganov/whisper.cpp
+```
+
+```typescript
+transcriber: { type: "whisper-cpp", modelPath: "/path/to/ggml-large-v3-turbo.bin" }
+```
 
 ## Troubleshooting
 
-### "No transcription backend found"
-Install one of the supported backends — see the table above for your platform.
+**"No transcription backend found"** — Install one of the engines listed above for your platform.
 
-### "Transcription timed out"
-Models download automatically on first use (~1-2.5GB). Check `~/.cache/huggingface/` for progress.
+**First run is slow** — The model downloads automatically (~1–2.5 GB). Subsequent runs are fast.
 
-### "Microphone permission denied" (macOS)
-Go to **System Settings → Privacy & Security → Microphone** and enable access for your terminal app.
+**"Microphone permission denied"** (macOS) — System Settings → Privacy & Security → Microphone → enable your terminal app.
 
-## Architecture
-
-```
-src/
-├── index.ts          # Extension entry — custom editor with spacebar detection, waveform widget
-├── config.ts         # Configuration (transcriber backend, sample rate)
-├── audio.ts          # Microphone capture via PvRecorder, Int16 samples + RMS levels
-├── recognizer.ts     # Backend registry, auto-detect, temp WAV, CLI dispatch
-└── dictation.ts      # Audio buffering, waveform state, batch-transcribe on stop
-```
-
-**Audio flow**: PvRecorder → PCM buffer → temp WAV file → CLI transcriber → text → editor
-
-**Backend abstraction**: Each backend defines a binary name, how to build CLI args, and how to extract text from the result. Adding a new backend is ~15 lines of code.
-
-## Dependencies
-
-- [@picovoice/pvrecorder-node](https://www.npmjs.com/package/@picovoice/pvrecorder-node) — Cross-platform audio capture
-- A transcription backend (user-installed, see above)
+**"Siri and Dictation are disabled"** (apple backend) — System Settings → Keyboard → Dictation → enable.
 
 ## License
 
