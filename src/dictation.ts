@@ -2,20 +2,38 @@ import type { TranscribeConfig } from "./config.js";
 import type { AudioCapture } from "./audio.js";
 import type { TranscriptionEngine } from "./recognizer.js";
 
+/**
+ * Unicode block characters for waveform rendering, from empty to full.
+ * Using lower-block elements: ▁▂▃▄▅▆▇█
+ */
+const WAVEFORM_BLOCKS = [" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
+
+/** Number of RMS samples to keep for waveform display */
+const WAVEFORM_HISTORY = 60;
+
+/** How often to push a new waveform sample (ms) */
+const WAVEFORM_INTERVAL = 100;
+
 export class DictationSession {
   private audioCapture: AudioCapture;
   private engine: TranscriptionEngine;
   private config: TranscribeConfig;
 
   private existingText = "";
-  private committedText = "";
-  private currentPartial = "";
   private _isActive = false;
 
-  /** Pending UI update — we throttle to avoid blocking the event loop */
-  private uiUpdatePending = false;
+  /** Raw audio buffer — accumulates all recorded PCM data */
+  private audioChunks: Int16Array[] = [];
+  private totalSamples = 0;
+
+  /** Waveform state */
+  private rmsHistory: number[] = [];
+  private rmsAccum: number[] = [];
+  private waveformTimer: ReturnType<typeof setInterval> | null = null;
+  private startTime = 0;
+
+  /** UI refs */
   private uiCtx: any = null;
-  /** TUI reference for triggering re-renders */
   private tui: any = null;
 
   constructor(
@@ -32,82 +50,121 @@ export class DictationSession {
     return this._isActive;
   }
 
-  /** Set the TUI reference (captured from widget factory) for triggering re-renders */
+  /** Set the TUI reference for triggering re-renders */
   setTui(tui: any): void {
     this.tui = tui;
+  }
+
+  /** Get waveform bars for rendering. Returns array of block characters. */
+  getWaveformBars(maxBars: number): string[] {
+    const history = this.rmsHistory;
+    // Take the last `maxBars` entries
+    const start = Math.max(0, history.length - maxBars);
+    const slice = history.slice(start);
+
+    // Pad with spaces if we don't have enough history yet
+    const bars: string[] = [];
+    for (let i = 0; i < maxBars - slice.length; i++) {
+      bars.push(WAVEFORM_BLOCKS[0]);
+    }
+
+    for (const rms of slice) {
+      // Map RMS to block index. RMS of speech is typically 0.01-0.15
+      // Apply a curve to make speech more visible
+      const normalized = Math.min(1, rms * 8);
+      const idx = Math.round(normalized * (WAVEFORM_BLOCKS.length - 1));
+      bars.push(WAVEFORM_BLOCKS[idx]);
+    }
+
+    return bars;
+  }
+
+  /** Get elapsed time as MM:SS */
+  getElapsedTime(): string {
+    if (!this._isActive) return "00:00";
+    const elapsed = Math.floor((Date.now() - this.startTime) / 1000);
+    const mins = String(Math.floor(elapsed / 60)).padStart(2, "0");
+    const secs = String(elapsed % 60).padStart(2, "0");
+    return `${mins}:${secs}`;
   }
 
   /** Start a dictation session */
   start(ctx: any): void {
     if (this._isActive) return;
 
-    // Capture existing editor content
     this.existingText = ctx.ui.getEditorText() || "";
-    this.committedText = "";
-    this.currentPartial = "";
     this._isActive = true;
     this.uiCtx = ctx;
+    this.audioChunks = [];
+    this.totalSamples = 0;
+    this.rmsHistory = [];
+    this.rmsAccum = [];
+    this.startTime = Date.now();
 
-    // Set up engine callbacks
-    this.engine.onPartialResult = (text: string) => {
-      this.currentPartial = text;
-      this.scheduleUIUpdate();
-    };
-
-    this.engine.onFinalizedSegment = (text: string) => {
-      // Append finalized segment with space separator
-      if (this.committedText.length > 0) {
-        this.committedText += " " + text;
+    // Periodically average accumulated RMS values into a single waveform sample
+    this.waveformTimer = setInterval(() => {
+      if (this.rmsAccum.length > 0) {
+        const avg = this.rmsAccum.reduce((a, b) => a + b, 0) / this.rmsAccum.length;
+        this.rmsHistory.push(avg);
+        this.rmsAccum = [];
       } else {
-        this.committedText = text;
+        this.rmsHistory.push(0);
       }
-      this.currentPartial = "";
-      this.scheduleUIUpdate();
-    };
+      // Trim history
+      if (this.rmsHistory.length > WAVEFORM_HISTORY * 2) {
+        this.rmsHistory = this.rmsHistory.slice(-WAVEFORM_HISTORY);
+      }
+      this.requestRender();
+    }, WAVEFORM_INTERVAL);
 
-    // Start capturing — pass callbacks directly
+    // Start audio capture
     this.audioCapture.start(
-      (samples: Float32Array) => {
-        try {
-          this.engine.feedAudio(samples);
-        } catch (e: any) {
-          ctx.ui.notify(`Transcription error: ${e.message}`, "error");
-          this.audioCapture.stop();
-          this._isActive = false;
-        }
+      (samples: Int16Array, rms: number) => {
+        this.audioChunks.push(new Int16Array(samples));
+        this.totalSamples += samples.length;
+        this.rmsAccum.push(rms);
       },
       (err: Error) => {
         ctx.ui.notify(`Microphone error: ${err.message}`, "error");
-        this._isActive = false;
+        this.cleanup();
         ctx.ui.setWidget("pi-transcribe", undefined);
+        ctx.ui.setStatus("pi-transcribe", undefined);
       }
     );
   }
 
-  /** Stop dictation and commit remaining text */
-  stop(ctx: any): void {
+  /** Stop dictation — finalize and batch-transcribe, then commit text to editor */
+  async stop(ctx: any): Promise<void> {
     if (!this._isActive) return;
 
     this.audioCapture.stop();
+    this._isActive = false;
+    this.stopWaveformTimer();
 
-    // Finalize remaining audio
-    const remaining = this.engine.finalize();
-    if (remaining) {
-      if (this.committedText.length > 0) {
-        this.committedText += " " + remaining;
-      } else {
-        this.committedText = remaining;
-      }
+    // Build the complete audio buffer from chunks
+    const audioBuffer = this.buildAudioBuffer();
+    const duration = this.totalSamples / this.config.sampleRate;
+
+    if (duration < 0.3) {
+      ctx.ui.notify("Recording too short", "info");
+      this.cleanup();
+      return;
     }
 
-    this.currentPartial = "";
-    this.flushEditorUpdate(ctx);
-    this._isActive = false;
+    // Transcribe the complete audio
+    const text = await this.engine.transcribe(audioBuffer);
 
-    // Clear engine callbacks
-    this.engine.onPartialResult = null;
-    this.engine.onFinalizedSegment = null;
-    this.uiCtx = null;
+    if (text.length > 0) {
+      let editorText = this.existingText;
+      if (editorText.length > 0 && !editorText.endsWith(" ") && !editorText.endsWith("\n")) {
+        editorText += " ";
+      }
+      editorText += text;
+      ctx.ui.setEditorText(editorText);
+      this.requestRender();
+    }
+
+    this.cleanup();
   }
 
   /** Cancel dictation and restore editor to original state */
@@ -116,60 +173,41 @@ export class DictationSession {
 
     this.audioCapture.stop();
     this._isActive = false;
+    this.stopWaveformTimer();
 
-    // Restore original editor content
     ctx.ui.setEditorText(this.existingText);
     this.requestRender();
+    this.cleanup();
+  }
 
-    // Clear engine callbacks
-    this.engine.onPartialResult = null;
-    this.engine.onFinalizedSegment = null;
+  /** Build a single Buffer from accumulated audio chunks */
+  private buildAudioBuffer(): Buffer {
+    const result = new Int16Array(this.totalSamples);
+    let offset = 0;
+    for (const chunk of this.audioChunks) {
+      result.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return Buffer.from(result.buffer, result.byteOffset, result.byteLength);
+  }
+
+  private stopWaveformTimer(): void {
+    if (this.waveformTimer) {
+      clearInterval(this.waveformTimer);
+      this.waveformTimer = null;
+    }
+  }
+
+  private cleanup(): void {
+    this.stopWaveformTimer();
+    this.audioChunks = [];
+    this.totalSamples = 0;
+    this.rmsHistory = [];
+    this.rmsAccum = [];
     this.uiCtx = null;
   }
 
-  /**
-   * Schedule a UI update on the next event loop tick.
-   * This decouples editor updates from the rapid audio data callbacks,
-   * giving the TUI a chance to repaint between updates.
-   */
-  private scheduleUIUpdate(): void {
-    if (this.uiUpdatePending) return;
-    this.uiUpdatePending = true;
-
-    setTimeout(() => {
-      this.uiUpdatePending = false;
-      if (this._isActive && this.uiCtx) {
-        this.flushEditorUpdate(this.uiCtx);
-      }
-    }, 50); // Update UI at most ~20 times per second
-  }
-
-  /** Immediately update the editor with current transcription state */
-  private flushEditorUpdate(ctx: any): void {
-    let text = this.existingText;
-
-    // Add separator between existing text and transcription
-    if (text.length > 0 && (this.committedText.length > 0 || this.currentPartial.length > 0)) {
-      if (!text.endsWith(" ") && !text.endsWith("\n")) {
-        text += " ";
-      }
-    }
-
-    text += this.committedText;
-
-    // Add partial text
-    if (this.currentPartial.length > 0) {
-      if (text.length > 0 && !text.endsWith(" ")) {
-        text += " ";
-      }
-      text += this.currentPartial;
-    }
-
-    ctx.ui.setEditorText(text);
-    this.requestRender();
-  }
-
-  /** Request TUI re-render to reflect editor text changes on screen */
+  /** Request TUI re-render */
   private requestRender(): void {
     if (this.tui?.requestRender) {
       this.tui.requestRender();

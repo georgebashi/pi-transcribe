@@ -13,7 +13,7 @@ export class AudioCapture {
   private recorder: any = null;
   private _isRecording = false;
   private readLoop: Promise<void> | null = null;
-  private onData: ((samples: Float32Array) => void) | null = null;
+  private onData: ((samples: Int16Array, rms: number) => void) | null = null;
   private onError: ((err: Error) => void) | null = null;
 
   constructor(config: TranscribeConfig) {
@@ -26,11 +26,10 @@ export class AudioCapture {
 
   /**
    * Start capturing audio from the microphone.
-   * Calls `onData` with Float32Array samples as they arrive.
-   * Calls `onError` if an error occurs.
+   * Calls `onData` with raw Int16 samples and the RMS level (0-1) for that frame.
    */
   start(
-    onData: (samples: Float32Array) => void,
+    onData: (samples: Int16Array, rms: number) => void,
     onError: (err: Error) => void
   ): void {
     if (this._isRecording) return;
@@ -44,12 +43,10 @@ export class AudioCapture {
     this.onError = onError;
 
     try {
-      // frameLength of 512 at 16kHz = 32ms per frame — good for real-time streaming
+      // frameLength of 512 at 16kHz = 32ms per frame
       this.recorder = new PvRecorder(512);
       this.recorder.start();
       this._isRecording = true;
-
-      // Start async read loop
       this.readLoop = this.runReadLoop();
     } catch (e: any) {
       this._isRecording = false;
@@ -73,20 +70,10 @@ export class AudioCapture {
   /** Stop capturing audio */
   stop(): void {
     if (!this._isRecording || !this.recorder) return;
-
     this._isRecording = false;
 
-    try {
-      this.recorder.stop();
-    } catch {
-      // ignore cleanup errors
-    }
-
-    try {
-      this.recorder.release();
-    } catch {
-      // ignore cleanup errors
-    }
+    try { this.recorder.stop(); } catch { /* ignore */ }
+    try { this.recorder.release(); } catch { /* ignore */ }
 
     this.recorder = null;
     this.onData = null;
@@ -100,13 +87,15 @@ export class AudioCapture {
         const frame: Int16Array = await this.recorder.read();
         if (!this._isRecording) break;
 
-        // Convert Int16 to Float32 (normalize to [-1, 1])
-        const float32 = new Float32Array(frame.length);
+        // Compute RMS (0-1 range)
+        let sumSq = 0;
         for (let i = 0; i < frame.length; i++) {
-          float32[i] = frame[i] / 32768.0;
+          const n = frame[i] / 32768.0;
+          sumSq += n * n;
         }
+        const rms = Math.sqrt(sumSq / frame.length);
 
-        this.onData?.(float32);
+        this.onData?.(frame, rms);
       } catch (e: any) {
         if (this._isRecording) {
           this.onError?.(e);

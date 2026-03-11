@@ -1,145 +1,109 @@
+import * as path from "node:path";
+import { spawn, type ChildProcess } from "node:child_process";
 import type { TranscribeConfig } from "./config.js";
-import type { ModelManager } from "./model-manager.js";
 
-// sherpa-onnx types
-let sherpa_onnx: any;
-try {
-  sherpa_onnx = require("sherpa-onnx-node");
-} catch {
-  // Will be caught at extension init
-}
-
-export type TranscriptionCallback = (text: string) => void;
-
+/**
+ * Batch transcription engine.
+ * Spawns a Python worker that reads all audio from stdin, transcribes it,
+ * and returns the result as a single JSON line on stdout.
+ */
 export class TranscriptionEngine {
   private config: TranscribeConfig;
-  private modelManager: ModelManager;
-  private recognizer: any = null;
-  private stream: any = null;
-  private segmentIndex = 0;
-  private lastText = "";
 
-  /** Called when partial (draft) text changes */
-  onPartialResult: TranscriptionCallback | null = null;
-
-  /** Called when a segment is finalized (endpoint detected or recording stops) */
-  onFinalizedSegment: TranscriptionCallback | null = null;
-
-  constructor(config: TranscribeConfig, modelManager: ModelManager) {
+  constructor(config: TranscribeConfig) {
     this.config = config;
-    this.modelManager = modelManager;
   }
 
-  /** Initialize the recognizer. Returns false if model files are missing. */
-  init(): boolean {
-    if (!sherpa_onnx) {
-      throw new Error("sherpa-onnx-node not available");
-    }
+  /**
+   * Transcribe a buffer of raw 16-bit PCM audio (16kHz mono).
+   * Returns the transcribed text, or empty string if nothing was recognized.
+   */
+  async transcribe(audioBuffer: Buffer): Promise<string> {
+    const workerScript = path.join(
+      path.dirname(new URL(import.meta.url).pathname),
+      "transcribe_worker.py"
+    );
 
-    const recognizerConfig = {
-      featConfig: {
-        sampleRate: this.config.sampleRate,
-        featureDim: 80,
-      },
-      modelConfig: {
-        transducer: {
-          encoder: this.modelManager.encoderPath,
-          decoder: this.modelManager.decoderPath,
-          joiner: this.modelManager.joinerPath,
-        },
-        tokens: this.modelManager.tokensPath,
-        numThreads: this.config.numThreads,
-        provider: "cpu",
-        debug: 0,
-      },
-      decodingMethod: "greedy_search",
-      maxActivePaths: 4,
-      enableEndpoint: true,
-      rule1MinTrailingSilence: this.config.rule1MinTrailingSilence,
-      rule2MinTrailingSilence: this.config.rule2MinTrailingSilence,
-      rule3MinUtteranceLength: this.config.rule3MinUtteranceLength,
-    };
+    const venvPython = path.join(
+      path.dirname(new URL(import.meta.url).pathname),
+      "..",
+      ".venv",
+      "bin",
+      "python3"
+    );
 
-    try {
-      this.recognizer = new sherpa_onnx.OnlineRecognizer(recognizerConfig);
-      this.stream = this.recognizer.createStream();
-      this.segmentIndex = 0;
-      this.lastText = "";
-      return true;
-    } catch (e: any) {
-      this.recognizer = null;
-      this.stream = null;
-      throw e;
-    }
-  }
+    const pythonBin = await fileExists(venvPython) ? venvPython : "python3";
 
-  /** Feed audio samples and trigger decoding. Calls callbacks as results arrive. */
-  feedAudio(samples: Float32Array): void {
-    if (!this.recognizer || !this.stream) return;
+    return new Promise<string>((resolve, reject) => {
+      const proc = spawn(pythonBin, [workerScript, this.config.modelId], {
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env },
+      });
 
-    this.stream.acceptWaveform({
-      sampleRate: this.config.sampleRate,
-      samples,
+      let stdout = "";
+      let stderr = "";
+
+      proc.stdout!.on("data", (chunk: Buffer) => {
+        stdout += chunk.toString();
+      });
+
+      proc.stderr?.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+
+      proc.on("error", (err: Error) => {
+        reject(new Error(`Failed to start transcription worker: ${err.message}`));
+      });
+
+      proc.on("exit", (code: number | null) => {
+        if (code !== 0) {
+          // Try to extract error from stdout JSON
+          try {
+            const msg = JSON.parse(stdout.trim());
+            if (msg.type === "error") {
+              reject(new Error(msg.message));
+              return;
+            }
+          } catch { /* ignore */ }
+          reject(new Error(`Transcription worker exited with code ${code}: ${stderr.slice(0, 200)}`));
+          return;
+        }
+
+        // Parse result from stdout — expect a single JSON line
+        try {
+          const msg = JSON.parse(stdout.trim());
+          if (msg.type === "result") {
+            resolve(msg.text || "");
+          } else if (msg.type === "error") {
+            reject(new Error(msg.message));
+          } else {
+            resolve("");
+          }
+        } catch {
+          reject(new Error(`Failed to parse worker output: ${stdout.slice(0, 200)}`));
+        }
+      });
+
+      // Write all audio to stdin and close
+      proc.stdin!.write(audioBuffer, () => {
+        proc.stdin!.end();
+      });
+
+      // Timeout after 30s
+      setTimeout(() => {
+        try { proc.kill("SIGTERM"); } catch { /* ignore */ }
+        reject(new Error("Transcription timed out"));
+      }, 30000);
     });
-
-    while (this.recognizer.isReady(this.stream)) {
-      this.recognizer.decode(this.stream);
-    }
-
-    const isEndpoint = this.recognizer.isEndpoint(this.stream);
-    const result = this.recognizer.getResult(this.stream);
-    const text = (result.text || "").trim();
-
-    if (isEndpoint) {
-      if (text.length > 0) {
-        this.onFinalizedSegment?.(text);
-        this.segmentIndex++;
-      }
-      this.recognizer.reset(this.stream);
-      this.lastText = "";
-    } else if (text !== this.lastText) {
-      this.lastText = text;
-      if (text.length > 0) {
-        this.onPartialResult?.(text);
-      }
-    }
   }
+}
 
-  /** Finalize any remaining partial text when recording stops */
-  finalize(): string | null {
-    if (!this.recognizer || !this.stream) return null;
-
-    // Feed a bit of silence to flush
-    const silence = new Float32Array(this.config.sampleRate * 0.3);
-    this.stream.acceptWaveform({
-      sampleRate: this.config.sampleRate,
-      samples: silence,
-    });
-
-    while (this.recognizer.isReady(this.stream)) {
-      this.recognizer.decode(this.stream);
-    }
-
-    const text = this.recognizer.getResult(this.stream).text.trim();
-
-    // Reset stream for next use
-    this.recognizer.reset(this.stream);
-    this.lastText = "";
-
-    if (text.length > 0) {
-      this.segmentIndex++;
-      return text;
-    }
-    return null;
-  }
-
-  /** Release all resources */
-  destroy(): void {
-    this.stream = null;
-    this.recognizer = null;
-    this.segmentIndex = 0;
-    this.lastText = "";
-    this.onPartialResult = null;
-    this.onFinalizedSegment = null;
+async function fileExists(p: string): Promise<boolean> {
+  try {
+    const fs = await import("node:fs/promises");
+    await fs.access(p);
+    return true;
+  } catch {
+    return false;
   }
 }
