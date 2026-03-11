@@ -16,6 +16,10 @@ Then install a speech-to-text engine (see next section).
 
 pi-transcribe needs a transcription tool on your PATH. It auto-detects the best one available — just install one and go.
 
+> **Tip:** You can use `uv tool install` instead of `pipx install` if you prefer [uv](https://github.com/astral-sh/uv).
+
+Models download automatically on first use (~1–2.5 GB to `~/.cache/huggingface/`).
+
 ### macOS (Apple Silicon)
 
 Pick one. Listed best → worst. The first one found is used automatically.
@@ -34,10 +38,6 @@ Pick one. Listed best → worst. The first one found is used automatically.
 |--------|---------|-------|
 | **nano-parakeet** | `pipx install nano-parakeet` | Best quality. Uses CUDA if available, falls back to CPU. |
 | **whisper** | `pipx install openai-whisper` | Widely compatible fallback. |
-
-> **Tip:** You can use `uv tool install` instead of `pipx install` if you prefer [uv](https://github.com/astral-sh/uv).
-
-Models download automatically on first use (~1–2.5 GB to `~/.cache/huggingface/`).
 
 ## Usage
 
@@ -60,28 +60,37 @@ Toggle recording on/off (alternative to hold-spacebar).
 
 The engine auto-detection runs once at startup. It walks the priority list for your platform and locks the first binary it finds on PATH.
 
-## Advanced
+## Configuration
 
-### Pin a specific engine
+Optional. Create `~/.pi/agent/pi-transcribe.json` to override defaults:
 
-Edit `src/config.ts`:
-
-```typescript
-transcriber: { type: "parakeet-mlx" }
-// or with options:
-transcriber: { type: "nano-parakeet", device: "cpu" }
-transcriber: { type: "whisper-cpp", modelPath: "/path/to/ggml-large-v3-turbo.bin" }
-transcriber: { type: "custom", command: "my-tool", args: ["--lang", "en"] }
+```json
+{
+  "transcriber": "parakeet-mlx"
+}
 ```
 
-### Custom transcriber
+That's the shorthand. For backends with options, use the object form:
 
-Any CLI that takes a WAV file path as its last argument and prints text to stdout:
-
-```typescript
-transcriber: { type: "custom", command: "my-transcriber", args: ["--format", "plain"] }
-// runs: my-transcriber --format plain /tmp/audio.wav
+```json
+{
+  "transcriber": { "type": "nano-parakeet", "device": "cpu" }
+}
 ```
+
+```json
+{
+  "transcriber": { "type": "whisper-cpp", "modelPath": "/path/to/ggml-large-v3-turbo.bin" }
+}
+```
+
+```json
+{
+  "transcriber": { "type": "custom", "command": "my-transcriber", "args": ["--lang", "en"] }
+}
+```
+
+If the file doesn't exist, auto-detection is used (recommended for most users).
 
 ### whisper.cpp
 
@@ -92,8 +101,10 @@ brew install whisper-cpp  # macOS
 # Download a model: https://huggingface.co/ggerganov/whisper.cpp
 ```
 
-```typescript
-transcriber: { type: "whisper-cpp", modelPath: "/path/to/ggml-large-v3-turbo.bin" }
+```json
+{
+  "transcriber": { "type": "whisper-cpp", "modelPath": "/path/to/ggml-large-v3-turbo.bin" }
+}
 ```
 
 ## Troubleshooting

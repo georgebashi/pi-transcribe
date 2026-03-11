@@ -1,6 +1,6 @@
 import { CustomEditor, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
-import { DEFAULT_CONFIG } from "./config.js";
+import { loadConfig } from "./config.js";
 import { AudioCapture } from "./audio.js";
 import { TranscriptionEngine } from "./recognizer.js";
 import { DictationSession } from "./dictation.js";
@@ -13,7 +13,7 @@ const SPACE_GAP_MS = 150;
 const SPACE_RELEASE_MS = 200;
 
 export default function (pi: ExtensionAPI) {
-  const config = { ...DEFAULT_CONFIG };
+  const config = loadConfig();
   let audioCapture: AudioCapture | null = null;
   let dictation: DictationSession | null = null;
   let pvrecorderAvailable = true;
