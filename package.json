@@ -7,7 +7,7 @@
   "keywords": ["pi-package", "speech-to-text", "dictation", "transcription", "voice"],
   "repository": {
     "type": "git",
-    "url": "https://github.com/badlogic/pi-transcribe"
+    "url": "https://github.com/georgebashi/pi-transcribe"
   },
   "scripts": {
     "clean": "echo 'nothing to clean'",
